@@ -1,12 +1,6 @@
 
 
 
-Mode <- function(x) {
-     ux <- unique(x)
-     ux[which.max(tabulate(match(x, ux)))]
-}
-# Thanks to https://gist.github.com/jmarhee/8530768
-
 produce.mean.df <- function(x) {
   mode.vars<- sapply(x, FUN=function(x) {is.factor(x) | is.character(x) } )
   new.data.ls <- list()
@@ -190,10 +184,11 @@ interaction.effects.quantiles <- function(gdp.quantiles, formula, quantile.var, 
 
   jit.preference.median <- median( unique(full.df[, c("naics", "jit.preference")])$jit.preference, na.rm=TRUE)
   scale.factor.median <- median( unique(full.df[, c("naics", "scale.factor")])$scale.factor, na.rm=TRUE)
+  log.scale.factor.median <- log( median( unique(full.df[, c("naics", "scale.factor")])$scale.factor, na.rm=TRUE) )
   
   meaned.full.df <- data.frame(GDP = level.gdp.median, gc.dist = level.gc.dist.median, 
              jit.preference = jit.preference.median, scale.factor = scale.factor.median,
-             fta=0, bit=0)
+             fta=0, bit=0, log.scale.factor = log.scale.factor.median )
   
 
   epsilon <- 10^-4
@@ -233,6 +228,11 @@ interaction.effects.quantiles <- function(gdp.quantiles, formula, quantile.var, 
     meaned.full.df$scale.factor <- quantile(unique(full.df[, c("naics", "scale.factor")])$scale.factor,
                                  probs = target.quantile, na.rm=TRUE)
   }
+  
+  if (quantile.var=="log.scale.factor") {
+    meaned.full.df$log.scale.factor <- quantile(unique(full.df[, c("naics", "log.scale.factor")])$log.scale.factor,
+                                 probs = target.quantile, na.rm=TRUE)
+  }
 
   meaned.full.df.dif <- meaned.full.df
   meaned.full.df.dif[, change.var] <- meaned.full.df.dif[, change.var] + epsilon
@@ -255,10 +255,67 @@ interaction.effects.quantiles <- function(gdp.quantiles, formula, quantile.var, 
 # that the prediction takes into account the median and SD transformation does give the intended result.
 
 
-input.formula <- as.formula( log(export.value) ~  ( I(log(gc.dist) - log.gc.dist.median)  +  I(log(GDP) - log.gdp.median)  + 
-                                            I((scale.factor - scale.factor.median)/scale.factor.sd)  + 
-                                            I((jit.preference - jit.preference.median)/jit.preference.sd) + fta )^2     | 
+
+
+
+
+output.reg.table <- function(formula, output.file, table.title, file.or.object) {
+  test.felm <- felm(  formula,  
+    data=full.df[ 
+   # full.df$export.value > 0 
+   #                   & full.df$cty_code %in% fta.dates.df$cty_code[fta.dates.df$fta.start.yr > 1989 ] 
+   #             &
+                  substr(as.character(full.df$naics), 1, 2) %in% 31:33
+  , ],
+  exactDOF=TRUE) # weights=
+
+
+  rownames(test.felm$beta) <- gsub("I[(][(][^/]+/",  "", rownames(test.felm$beta))
+  rownames(test.felm$beta) <- gsub("[.]sd[)]", "", rownames(test.felm$beta))
+  rownames(test.felm$beta) <- gsub("I[^-]+(-) ", "", rownames(test.felm$beta))
+  rownames(test.felm$beta) <- gsub("[.]median[)]", "", rownames(test.felm$beta))
+  rownames(test.felm$coefficients) <- rownames(test.felm$beta)
+  
+#  test.felm$clustervcv[test.felm$clustervcv==0] <- NA
+#  test.felm$robustvcv[test.felm$robustvcv==0] <- NA
+
+  if (file.or.object=="file") {
+    stargazer(test.felm,  out=paste0("/Users/travismcarthur/Desktop/RTA project/Preliminary results/", output.file),
+          no.space=TRUE, single.row = TRUE, align=TRUE,
+          dep.var.labels=as.character(formula)[2],
+          title=table.title,
+          add.lines=list(c("Adj. R$^{2}$ (proj model)", round(summary(results.felm)$P.adj.r.squared, 3) ) ) #,
+#          report= c("vc*sp")
+          )
+    return(NULL)
+  }
+  
+  if (file.or.object=="object") {
+    return( summary(test.felm) )
+  }
+}
+
+
+#paste0("Adj. R$^{2}$ (proj model) & \\multicolumn{1}{c}{", 
+#            round(summary(results.felm)$P.adj.r.squared, 3), "}" )
+
+
+
+
+# full.df$log.scale.factor <- log(full.df$scale.factor))
+
+
+
+
+input.formula <- as.formula( log(export.value) ~  ( I(log.scale.factor - log.scale.factor.median)  + 
+                                            I((jit.preference - jit.preference.median)/jit.preference.sd) + fta +
+                                           I(log(gc.dist) - log.gc.dist.median)  +  I(log(GDP) - log.gdp.median) )^2     | 
                                   country.name + year + naics   | 0 |  country.name  )
+
+
+output.reg.table(input.formula , "table1.tex", 
+                "MODEL 1: FTA effect. Manufacturing exports only. FE on country, year, and NAICS classification. Clustered standard errors on country. Variables have been standardized by median and SD, except GDP and distance were not standardized by SD.", file.or.object="file") 
+
 
 
 #int.eff.results.4 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "gc.dist", "jit.preference")
@@ -273,34 +330,34 @@ input.formula <- as.formula( log(export.value) ~  ( I(log(gc.dist) - log.gc.dist
 
 
 int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "GDP", "jit.preference")
-int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "GDP", "scale.factor")
+int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "GDP", "log.scale.factor")
 
 int.eff.table.1 <- as.data.frame(matrix(c(int.eff.results.1, int.eff.results.2),   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("jit.preference", "scale.factor")
+colnames(int.eff.table.1 ) <- c("jit.preference", "log.scale.factor")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/interact-table1.tex",
           no.space=TRUE, single.row = TRUE, align=TRUE, summary=FALSE,
-          title="MODEL 1: Marginal effect of one standard deviation change of JIT preference and Scale Factor upon the log value of trade flow, conditional on different levels of partner GDP, by quantiles.")
+          title="MODEL 1: Marginal effect of one standard deviation change of JIT preference and one log point change in Scale Factor upon the log value of trade flow, conditional on different levels of partner GDP, by quantiles.")
 
 
 
 int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "gc.dist", "jit.preference")
-int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "gc.dist", "scale.factor")
+int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "gc.dist", "log.scale.factor")
 
 int.eff.table.1 <- as.data.frame(matrix(c(int.eff.results.1, int.eff.results.2),   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("jit.preference", "scale.factor")
+colnames(int.eff.table.1 ) <- c("jit.preference", "log.scale.factor")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/interact-table2.tex",
           no.space=TRUE, single.row = TRUE, align=TRUE, summary=FALSE,
-          title="MODEL 1: Marginal effect of one standard deviation change of JIT preference and Scale Factor upon the log value of trade flow, conditional on different levels of partner distance, by quantiles.")
+          title="MODEL 1: Marginal effect of one standard deviation change of JIT preference and one log point change in Scale Factor upon the log value of trade flow, conditional on different levels of partner distance, by quantiles.")
 
 
 int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "jit.preference", "fta")
 
 int.eff.table.1 <- as.data.frame(matrix(int.eff.results.1,   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("jit.preference")
+colnames(int.eff.table.1 ) <- c("FTA")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/interact-table3.tex",
@@ -308,10 +365,10 @@ stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preli
           title="MODEL 1: Marginal effect of enacting an FTA upon the log value of trade flow, conditional on different levels of industry JIT Preference, by quantiles.")
 
 
-int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "scale.factor", "fta")
+int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "log.scale.factor", "fta")
 
 int.eff.table.1 <- as.data.frame(matrix(int.eff.results.1,   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("scale.factor")
+colnames(int.eff.table.1 ) <- c("FTA")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/interact-table4.tex",
@@ -322,83 +379,53 @@ stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preli
 
 
 
-
-output.reg.table <- function(formula, output.file, table.title, file.or.object) {
-  test.felm <- felm(  formula,  
-    data=full.df[ full.df$export.value > 0 
-  #                   & full.df$cty_code %in% fta.dates.df$cty_code[fta.dates.df$fta.start.yr > 1989 ] 
-                &  substr(as.character(full.df$naics), 1, 2) %in% 31:33
-  , ],
-  exactDOF=TRUE) # weights=
-
-
-  rownames(test.felm$beta) <- gsub("I[(][(][^/]+/",  "", rownames(test.felm$beta))
-  rownames(test.felm$beta) <- gsub("[.]sd[)]", "", rownames(test.felm$beta))
-  rownames(test.felm$beta) <- gsub("I[^-]+(-) ", "", rownames(test.felm$beta))
-  rownames(test.felm$beta) <- gsub("[.]median[)]", "", rownames(test.felm$beta))
-  rownames(test.felm$coefficients) <- rownames(test.felm$beta)
-
-  if (file.or.object=="file") {
-    stargazer(test.felm,  out=paste0("/Users/travismcarthur/Desktop/RTA project/Preliminary results/", output.file),
-          no.space=TRUE, single.row = TRUE, align=TRUE,
-          dep.var.labels=as.character(formula)[2],
-          title=table.title)
-    return(NULL)
-  }
-  
-  if (file.or.object=="object") {
-    return( summary(test.felm) )
-  }
-}
-
-
 ####################################################
 ###### START NEXT MODEL
 ####################################################
 
 
 
-input.formula <- as.formula( log(export.value) ~  ( I(log(gc.dist) - log.gc.dist.median)  +  I(log(GDP) - log.gdp.median)  + 
-                                            I((scale.factor - scale.factor.median)/scale.factor.sd)  + 
-                                            I((jit.preference - jit.preference.median)/jit.preference.sd) + bit )^2     | 
+input.formula <- as.formula( log(export.value) ~  ( I(log.scale.factor - log.scale.factor.median)  + 
+                                            I((jit.preference - jit.preference.median)/jit.preference.sd) + bit +
+                                           I(log(gc.dist) - log.gc.dist.median)  +  I(log(GDP) - log.gdp.median) )^2     | 
                                   country.name + year + naics   | 0 |  country.name )
 
 output.reg.table(input.formula , "bit-no-cross-cnty-year.tex", 
-                "MODEL 2: BIT effect. Manufacturing exports only. FE on country, year, and NAICS classification. Clustered standard errors on country. Variables have been standardized by median and SD, except GDP and distance were not standardized by SD.") 
+                "MODEL 2: BIT effect. Manufacturing exports only. FE on country, year, and NAICS classification. Clustered standard errors on country. Variables have been standardized by median and SD, except GDP and distance were not standardized by SD.", file.or.object="file") 
 
 
 
 
 int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "GDP", "jit.preference")
-int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "GDP", "scale.factor")
+int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "GDP", "log.scale.factor")
 
 int.eff.table.1 <- as.data.frame(matrix(c(int.eff.results.1, int.eff.results.2),   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("jit.preference", "scale.factor")
+colnames(int.eff.table.1 ) <- c("jit.preference", "log.scale.factor")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/model-2-interact-table1.tex",
           no.space=TRUE, single.row = TRUE, align=TRUE, summary=FALSE,
-          title="MODEL 2: Marginal effect of one standard deviation change of JIT preference and Scale Factor upon the log value of trade flow, conditional on different levels of partner GDP, by quantiles.")
+          title="MODEL 2: Marginal effect of one standard deviation change of JIT preference and one log point change in Scale Factor upon the log value of trade flow, conditional on different levels of partner GDP, by quantiles.")
 
 
 
 
 int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "gc.dist", "jit.preference")
-int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "gc.dist", "scale.factor")
+int.eff.results.2 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "gc.dist", "log.scale.factor")
 
 int.eff.table.1 <- as.data.frame(matrix(c(int.eff.results.1, int.eff.results.2),   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("jit.preference", "scale.factor")
+colnames(int.eff.table.1 ) <- c("jit.preference", "log.scale.factor")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/model-2-interact-table2.tex",
           no.space=TRUE, single.row = TRUE, align=TRUE, summary=FALSE,
-          title="MODEL 2: Marginal effect of one standard deviation change of JIT preference and Scale Factor upon the log value of trade flow, conditional on different levels of partner distance, by quantiles.")
+          title="MODEL 2: Marginal effect of one standard deviation change of JIT preference and one log point change in Scale Factor upon the log value of trade flow, conditional on different levels of partner distance, by quantiles.")
 
 
 int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "jit.preference", "bit")
 
 int.eff.table.1 <- as.data.frame(matrix(int.eff.results.1,   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("jit.preference")
+colnames(int.eff.table.1 ) <- c("BIT")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/model-2-interact-table3.tex",
@@ -406,15 +433,16 @@ stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preli
           title="MODEL 2: Marginal effect of enacting a BIT upon the log value of trade flow, conditional on different levels of industry JIT Preference, by quantiles.")
 
 
-int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "scale.factor", "bit")
+int.eff.results.1 <- interaction.effects.quantiles(seq(0, 1, by=.1), input.formula, "log.scale.factor", "bit")
 
 int.eff.table.1 <- as.data.frame(matrix(int.eff.results.1,   nrow=11, byrow=FALSE ) )
-colnames(int.eff.table.1 ) <- c("scale.factor")
+colnames(int.eff.table.1 ) <- c("BIT")
 rownames(int.eff.table.1 ) <- paste0((0:10)*10, "%")
 
 stargazer(int.eff.table.1,  out="/Users/travismcarthur/Desktop/RTA project/Preliminary results/model-2-interact-table4.tex",
           no.space=TRUE, single.row = TRUE, align=TRUE, summary=FALSE,
           title="MODEL 2: Marginal effect of enacting a BIT upon the log value of trade flow, conditional on different levels of industry Scale Factor, by quantiles.")
+
 
 
 
@@ -483,6 +511,8 @@ output.reg.table(input.formula, output.file="", table.title="", file.or.object="
 
 summary( results.felm)
 
+results.felm$clustervcv[results.felm$clustervcv==0]
+
 
 full.df <- merge(full.df, unique(country.data.df[, c("cty_code", "coast.destination")]), all.x=TRUE)
 
@@ -533,12 +563,96 @@ summary(lm( log(export.value) ~ jit.preference + log(GDP)  , data=full.df[full.d
 
 
 
+max.possible.panel.observations <- length(unique(full.df$year)) * length(unique(full.df$country.name)) * 
+  length(unique( full.df$naics[substr(as.character(full.df$naics), 1, 2) %in% 31:33] ))
+
+
+results.felm$N / max.possible.panel.observations
+# Above is 0.5190807
+
+
+test.data.frame <- data.frame(a=1, b=2, c="filler")
+expand.grid(a=1:2, b=1:2)
+merge(test.data.frame, expand.grid(a=1:2, b=1:2), all= TRUE)
+
+
+expand.grid(a=1:2, b=c("A", "B"))
+
+
+str(expand.grid( full.df$year, full.df$country.name ))
+
+str(expand.grid( unique(full.df$year), unique(full.df$country.name ),
+unique( full.df$naics[substr(as.character(full.df$naics), 1, 2) %in% 31:33] ) ) )
+
+
+all.panel.combns <- expand.grid( unique(full.df$year), unique(full.df$country.name ),
+  unique( full.df$naics[substr(as.character(full.df$naics), 1, 2) %in% 31:33] ) )
+  
+colnames(all.panel.combns) <- c("year", "country.name", "naics")
+  
+all.panel.combns <- merge(all.panel.combns, unique(full.df[, c("year", "country.name", "bit", "fta", "GDP", "gc.dist" )]), all=TRUE)
+
+
+# May have a few "observations" drop off since not all countries will have GDP numbers 
+# available in all years
+
+all.panel.combns <- merge(all.panel.combns, unique(full.df[, c("naics", "scale.factor", "jit.preference" )]), all.x=TRUE)
+# Don't want the legitimate naics-specific data to be lost when merging with full.df, so need to have
+# the full panel expansion with each variable
+
+prop.table(table(complete.cases(all.panel.combns)))
+#    FALSE      TRUE 
+#0.1028325 0.8971675 
+# I think the result above indicates that we are OK
+
+full.test.df <- merge(full.df[,  c("naics", "year", "country.name", "export.value")], 
+  all.panel.combns, all= TRUE)
+# Added to the incomplete cases with the merge above, but this is probbaly due to 
+# specifying all=TRUE rather than all.y=TRUE
+  
+full.test.df$export.value[is.na(full.test.df$export.value)] <- 0
+
+table(complete.cases(full.test.df))
+table(complete.cases(all.panel.combns))
+# Should probably do a spot-check to make sure that this thing works OK
+
+
+full.test.df$log.scale.factor <- log(full.test.df$scale.factor)
+
+
+
+
+input.formula <- as.formula( asinh(export.value) ~  ( I(log.scale.factor - log.scale.factor.median)  + 
+                                            I((jit.preference - jit.preference.median)/jit.preference.sd) + fta +
+                                           I(log(gc.dist) - log.gc.dist.median)  +  I(log(GDP) - log.gdp.median) )^2     | 
+                                  country.name + year + naics   | 0 |  country.name  )
+
+
+full.df <- full.test.df
+
+
+
+output.reg.table(input.formula , "table1.tex", 
+                "MODEL 1: FTA effect. Manufacturing exports only. FE on country, year, and NAICS classification. Clustered standard errors on country. Variables have been standardized by median and SD, except GDP and distance were not standardized by SD.", file.or.object="object") 
 
 
 
 
 
+results.felm <- felm( input.formula , 
+  data=full.test.df[ 
+#                   & full.df$cty_code %in% fta.dates.df$cty_code[fta.dates.df$fta.start.yr > 1989 ] 
+                substr(as.character(full.test.df$naics), 1, 2) %in% 31:33
+, ],
+exactDOF=TRUE) # weights=
 
+
+summary( results.felm)
+
+
+library(lfe)
+library(stargazer)
+library(restorepoint)
 
 
 

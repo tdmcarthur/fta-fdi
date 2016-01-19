@@ -669,6 +669,7 @@ scale.factor.median <- median( unique(full.df[, c("naics", "scale.factor")])$sca
 scale.factor.sd <- sd( unique(full.df[, c("naics", "scale.factor")])$scale.factor, na.rm=TRUE)
 
 log.scale.factor.median <- median( log(unique(full.df[, c("naics", "scale.factor")])$scale.factor), na.rm=TRUE)
+log.scale.factor.sd <- sd( log(unique(full.df[, c("naics", "scale.factor")])$scale.factor), na.rm=TRUE)
 
 
 # TODO: Probably want to calculate the median of jit.preference only from manufacturing
